@@ -513,7 +513,7 @@ async function handleRequestLog(): Promise<Response> {
 <head>
   <meta charset="utf-8">
   <title>RoadPass - Request Log</title>
-  <meta http-equiv="refresh" content="10">
+
   <style>
     body { font-family: system-ui, sans-serif; margin: 2rem; background: #f5f5f5; }
     h1 { color: #333; }
@@ -603,7 +603,7 @@ async function handleRequestMap(): Promise<Response> {
 <head>
   <meta charset="utf-8">
   <title>RoadPass - Request Map</title>
-  <meta http-equiv="refresh" content="10">
+
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
   <style>
