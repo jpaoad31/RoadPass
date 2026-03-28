@@ -101,3 +101,14 @@ export async function findEventsNear(
 
   return events;
 }
+
+/** Delete all entries from the KV store. */
+export async function deleteAll(): Promise<number> {
+  let count = 0;
+  const entries = kv.list({ prefix: [] });
+  for await (const entry of entries) {
+    await kv.delete(entry.key);
+    count++;
+  }
+  return count;
+}

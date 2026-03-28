@@ -1,6 +1,6 @@
 import { haversineDistance, bearingBetween, bearingDifference } from "./geo.ts";
 import { reverseGeocode } from "./nominatim.ts";
-import { createEvent, updateResponse, getEvent, findEventsNear } from "./storage.ts";
+import { createEvent, updateResponse, getEvent, findEventsNear, deleteAll } from "./storage.ts";
 import type {
   HazardEventPayload,
   ResponseUpdate,
@@ -180,6 +180,10 @@ function route(req: Request): Promise<Response> | Response {
 
   if (req.method === "GET" && path === "/hazards/ahead") {
     return handleHazardsAhead(req);
+  }
+
+  if (req.method === "DELETE" && path === "/events") {
+    return deleteAll().then((count) => json({ status: "deleted", count }));
   }
 
   if (req.method === "GET" && path === "/health") {
