@@ -1,4 +1,5 @@
 import { haversineDistance, bearingBetween, bearingDifference } from "./geo.ts";
+import { computeConfidence } from "./scoring.ts";
 import { reverseGeocode } from "./nominatim.ts";
 import { createEvent, updateResponse, getEvent, listEvents, deleteAll, logRequest, listRequestLogs, upsertHazardForEvent, confirmHazard, findHazardsNear, getHazard, listHazards } from "./storage.ts";
 import type {
@@ -130,6 +131,7 @@ async function handleHazardsAhead(req: Request): Promise<Response> {
   // 4. Build response
   const hazards: HazardAhead[] = ahead.map((h) => {
     const dist = haversineDistance(lat, lon, h.latitude, h.longitude);
+    const { score, tier } = computeConfidence(h);
     return {
       hazard_id: h.hazard_id,
       latitude: h.latitude,
@@ -141,6 +143,8 @@ async function handleHazardsAhead(req: Request): Promise<Response> {
       reject_count: h.reject_count,
       first_reported_at: h.first_reported_at,
       last_reported_at: h.last_reported_at,
+      confidence_score: score,
+      confidence_tier: tier,
     };
   });
 
@@ -217,34 +221,25 @@ async function handleMap(): Promise<Response> {
   const hazards = await listHazards(100);
 
   const markers = hazards.map((h) => {
-    const total = h.confirm_count + h.reject_count;
-    const confirmRatio = total > 0 ? h.confirm_count / total : 0;
-    // Color by confidence: high confirms = red (danger), high clears = grey, no data = orange
-    let color: string;
-    let status: string;
-    if (total === 0) {
-      color = "#f39c12"; // orange — reports only, no confirmations yet
-      status = "unverified";
-    } else if (confirmRatio >= 0.5) {
-      color = "#e74c3c"; // red — mostly confirmed
-      status = "confirmed";
-    } else {
-      color = "#95a5a6"; // grey — mostly cleared
-      status = "cleared";
-    }
+    const { score, tier } = computeConfidence(h);
+
+    const color = tier === "high" ? "#e74c3c"
+      : tier === "medium" ? "#f39c12"
+      : "#95a5a6";
 
     // Scale radius by report count (min 6, max 16)
     const radius = Math.min(16, Math.max(6, 4 + h.report_count * 2));
 
     const lastTime = h.last_reported_at.replace("T", " ").slice(0, 19);
-    const popup = `<b>Hazard</b><br>` +
+    const popup = `<b>Hazard</b> (${tier})<br>` +
+      `Confidence: ${score}/100<br>` +
       `Reports: ${h.report_count}<br>` +
       `Confirmed: ${h.confirm_count} | Cleared: ${h.reject_count}<br>` +
       `Last: ${lastTime}<br>` +
       `Events: ${h.event_ids.length}<br>` +
       `<small>${esc(h.hazard_id)}</small>`;
 
-    return { lat: h.latitude, lon: h.longitude, color, popup, status, radius };
+    return { lat: h.latitude, lon: h.longitude, color, popup, status: tier, radius };
   });
 
   const markersJson = JSON.stringify(markers);
@@ -287,18 +282,18 @@ async function handleMap(): Promise<Response> {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     }).addTo(map);
 
-    var confirmedLayer = L.layerGroup().addTo(map);
-    var unverifiedLayer = L.layerGroup().addTo(map);
-    var clearedLayer = L.layerGroup().addTo(map);
+    var highLayer = L.layerGroup().addTo(map);
+    var mediumLayer = L.layerGroup().addTo(map);
+    var lowLayer = L.layerGroup().addTo(map);
 
     var layerMap = {
-      'confirmed': confirmedLayer,
-      'unverified': unverifiedLayer,
-      'cleared': clearedLayer
+      'high': highLayer,
+      'medium': mediumLayer,
+      'low': lowLayer
     };
 
     markers.forEach(function(m) {
-      var target = layerMap[m.status] || unverifiedLayer;
+      var target = layerMap[m.status] || lowLayer;
       L.circleMarker([m.lat, m.lon], {
         radius: m.radius,
         fillColor: m.color,
@@ -316,9 +311,9 @@ async function handleMap(): Promise<Response> {
 
     // Layer control
     var overlays = {};
-    overlays['<i style="background:#e74c3c;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Confirmed'] = confirmedLayer;
-    overlays['<i style="background:#f39c12;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Unverified'] = unverifiedLayer;
-    overlays['<i style="background:#95a5a6;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Cleared'] = clearedLayer;
+    overlays['<i style="background:#e74c3c;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> High confidence'] = highLayer;
+    overlays['<i style="background:#f39c12;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Medium confidence'] = mediumLayer;
+    overlays['<i style="background:#95a5a6;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Low confidence'] = lowLayer;
 
     L.control.layers(null, overlays, { collapsed: false, position: 'topright' }).addTo(map);
   <\/script>

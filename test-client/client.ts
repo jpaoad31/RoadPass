@@ -272,7 +272,7 @@ async function cmdAhead(locName: string, radiusM?: number) {
 
   const result = await doFetch(`/hazards/ahead?${params}`) as {
     road: { road_name: string | null; osm_way_id: string | null; road_ref: string | null };
-    hazards: { hazard_id: string; distance_m: number; bearing_deg: number; report_count: number; confirm_count: number; reject_count: number; last_reported_at: string }[];
+    hazards: { hazard_id: string; distance_m: number; bearing_deg: number; report_count: number; confirm_count: number; reject_count: number; last_reported_at: string; confidence_score: number; confidence_tier: string }[];
   } | null;
 
   if (result) {
@@ -283,7 +283,7 @@ async function cmdAhead(locName: string, radiusM?: number) {
       console.log(`  ${result.hazards.length} hazard(s) ahead:\n`);
       for (const h of result.hazards) {
         const stats = `${h.report_count} reports, ${h.confirm_count} confirmed, ${h.reject_count} cleared`;
-        console.log(`    ${h.distance_m}m away @ ${h.bearing_deg}° | ${stats}`);
+        console.log(`    ${h.distance_m}m away @ ${h.bearing_deg}° | ${h.confidence_tier.toUpperCase()} (${h.confidence_score}/100) | ${stats}`);
         console.log(`    hazard: ${h.hazard_id} | last: ${h.last_reported_at}`);
       }
     }

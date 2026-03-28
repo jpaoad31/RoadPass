@@ -58,6 +58,9 @@ export interface ResponseUpdate {
   response_latency_s: number;
 }
 
+/** Confidence tier — how trustworthy the hazard is */
+export type ConfidenceTier = "low" | "medium" | "high";
+
 /** What the "hazards ahead" endpoint returns per hazard */
 export interface HazardAhead {
   hazard_id: string;
@@ -70,6 +73,8 @@ export interface HazardAhead {
   reject_count: number;
   first_reported_at: string;
   last_reported_at: string;
+  confidence_score: number;    // 0–100
+  confidence_tier: ConfidenceTier;
 }
 
 /** Aggregated hazard record — multiple events/confirmations roll up into one */
