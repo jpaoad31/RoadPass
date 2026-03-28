@@ -652,9 +652,9 @@ async function handleRequestMap(): Promise<Response> {
     function arrowIcon(bearing, color) {
       return L.divIcon({
         className: '',
-        html: '<div style="transform:rotate(' + bearing + 'deg);color:' + color + ';font-size:18px;line-height:1;text-align:center;margin-top:-9px;margin-left:-6px;">&#x25B2;</div>',
-        iconSize: [12, 12],
-        iconAnchor: [6, 6]
+        html: '<div style="transform:rotate(' + bearing + 'deg);color:' + color + ';font-size:32px;font-weight:bold;line-height:1;text-align:center;margin-top:-16px;margin-left:-10px;text-shadow:0 0 3px #fff, 0 0 5px #fff;">&#x25B2;</div>',
+        iconSize: [20, 20],
+        iconAnchor: [10, 10]
       });
     }
 
