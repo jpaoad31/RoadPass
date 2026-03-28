@@ -214,33 +214,43 @@ async function handleDashboard(): Promise<Response> {
 }
 
 async function handleMap(): Promise<Response> {
-  const events = await listEvents(100);
+  const hazards = await listHazards(100);
 
-  const markers = events.map((e) => {
-    const lat = e.location.latitude;
-    const lon = e.location.longitude;
-    const time = new Date(e.detected_at_ms).toISOString().replace("T", " ").slice(0, 19);
-    const response = e.response ? e.response.answer : "pending";
-    const color = e.response?.answer === "yes" ? "#e74c3c"
-      : e.response?.answer === "no" ? "#95a5a6"
-      : "#f39c12";
-    const popup = `<b>${esc(e.trigger_source)}</b><br>` +
-      `${time}<br>` +
-      `Speed: ${e.vehicle.speed_ms.toFixed(1)} m/s<br>` +
-      `Accel: ${e.vehicle.accel_ms2.toFixed(1)} m/s&sup2;<br>` +
-      `Response: ${response}<br>` +
-      `<small>${esc(e.event_id)}</small>`;
-    const status = e.response?.answer === "yes" ? "confirmed"
-      : e.response?.answer === "no" ? "rejected"
-      : "pending";
-    return { lat, lon, color, popup, status };
+  const markers = hazards.map((h) => {
+    const total = h.confirm_count + h.reject_count;
+    const confirmRatio = total > 0 ? h.confirm_count / total : 0;
+    // Color by confidence: high confirms = red (danger), high clears = grey, no data = orange
+    let color: string;
+    let status: string;
+    if (total === 0) {
+      color = "#f39c12"; // orange — reports only, no confirmations yet
+      status = "unverified";
+    } else if (confirmRatio >= 0.5) {
+      color = "#e74c3c"; // red — mostly confirmed
+      status = "confirmed";
+    } else {
+      color = "#95a5a6"; // grey — mostly cleared
+      status = "cleared";
+    }
+
+    // Scale radius by report count (min 6, max 16)
+    const radius = Math.min(16, Math.max(6, 4 + h.report_count * 2));
+
+    const lastTime = h.last_reported_at.replace("T", " ").slice(0, 19);
+    const popup = `<b>Hazard</b><br>` +
+      `Reports: ${h.report_count}<br>` +
+      `Confirmed: ${h.confirm_count} | Cleared: ${h.reject_count}<br>` +
+      `Last: ${lastTime}<br>` +
+      `Events: ${h.event_ids.length}<br>` +
+      `<small>${esc(h.hazard_id)}</small>`;
+
+    return { lat: h.latitude, lon: h.longitude, color, popup, status, radius };
   });
 
   const markersJson = JSON.stringify(markers);
 
-  // Default center: if we have events, center on the most recent; otherwise SF
-  const centerLat = events.length > 0 ? events[0].location.latitude : 37.77;
-  const centerLon = events.length > 0 ? events[0].location.longitude : -122.42;
+  const centerLat = hazards.length > 0 ? hazards[0].latitude : 37.77;
+  const centerLon = hazards.length > 0 ? hazards[0].longitude : -122.42;
 
   const html = `<!DOCTYPE html>
 <html>
@@ -263,7 +273,7 @@ async function handleMap(): Promise<Response> {
 <body>
   <div id="header">
     <h1>Hazard Map</h1>
-    <span class="count">${events.length} event${events.length !== 1 ? "s" : ""}</span>
+    <span class="count">${hazards.length} hazard${hazards.length !== 1 ? "s" : ""}</span>
     <a href="/">Table View</a>
     <a href="/about">About</a>
   </div>
@@ -278,19 +288,19 @@ async function handleMap(): Promise<Response> {
     }).addTo(map);
 
     var confirmedLayer = L.layerGroup().addTo(map);
-    var pendingLayer = L.layerGroup().addTo(map);
-    var rejectedLayer = L.layerGroup().addTo(map);
+    var unverifiedLayer = L.layerGroup().addTo(map);
+    var clearedLayer = L.layerGroup().addTo(map);
 
     var layerMap = {
       'confirmed': confirmedLayer,
-      'pending': pendingLayer,
-      'rejected': rejectedLayer
+      'unverified': unverifiedLayer,
+      'cleared': clearedLayer
     };
 
     markers.forEach(function(m) {
-      var target = layerMap[m.status] || pendingLayer;
+      var target = layerMap[m.status] || unverifiedLayer;
       L.circleMarker([m.lat, m.lon], {
-        radius: 8,
+        radius: m.radius,
         fillColor: m.color,
         color: '#333',
         weight: 1,
@@ -306,9 +316,9 @@ async function handleMap(): Promise<Response> {
 
     // Layer control
     var overlays = {};
-    overlays['<i style="background:#e74c3c;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Confirmed (yes)'] = confirmedLayer;
-    overlays['<i style="background:#f39c12;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Pending'] = pendingLayer;
-    overlays['<i style="background:#95a5a6;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Rejected (no)'] = rejectedLayer;
+    overlays['<i style="background:#e74c3c;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Confirmed'] = confirmedLayer;
+    overlays['<i style="background:#f39c12;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Unverified'] = unverifiedLayer;
+    overlays['<i style="background:#95a5a6;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Cleared'] = clearedLayer;
 
     L.control.layers(null, overlays, { collapsed: false, position: 'topright' }).addTo(map);
   <\/script>
