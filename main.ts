@@ -267,6 +267,7 @@ async function handleMap(): Promise<Response> {
     #header .count { color: #aaa; font-size: 0.85rem; }
     #header a { color: #7cb9e8; text-decoration: none; font-size: 0.85rem; }
     #map { height: calc(100vh - 48px); }
+    .leaflet-tile-pane { filter: grayscale(1); }
     .legend { background: white; padding: 8px 12px; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); line-height: 1.8; }
     .legend i { width: 12px; height: 12px; display: inline-block; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
   </style>
@@ -613,6 +614,7 @@ async function handleRequestMap(): Promise<Response> {
     #header .count { color: #aaa; font-size: 0.85rem; }
     #header a { color: #7cb9e8; text-decoration: none; font-size: 0.85rem; }
     #map { height: calc(100vh - 48px); }
+    .leaflet-tile-pane { filter: grayscale(1); }
     .legend { background: white; padding: 8px 12px; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); line-height: 1.8; font-size: 0.85rem; }
     .legend i { width: 12px; height: 12px; display: inline-block; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
   </style>
@@ -642,7 +644,6 @@ async function handleRequestMap(): Promise<Response> {
     var reportLayer = L.layerGroup().addTo(map);
     var responseLayer = L.layerGroup().addTo(map);
     var routeLayer = L.layerGroup().addTo(map);
-    var arrowLayer = L.layerGroup().addTo(map);
 
     var layerMap = {
       'Query': queryLayer,
@@ -660,25 +661,31 @@ async function handleRequestMap(): Promise<Response> {
       }).addTo(routeLayer);
     }
 
-    function arrowIcon(bearing, color) {
+    function directionIcon(bearing, color) {
       return L.divIcon({
         className: '',
-        html: '<div style="transform:rotate(' + bearing + 'deg);color:' + color + ';font-size:32px;font-weight:bold;line-height:1;text-align:center;margin-top:-16px;margin-left:-10px;text-shadow:0 0 3px #fff, 0 0 5px #fff;">&#x25B2;</div>',
-        iconSize: [20, 20],
-        iconAnchor: [10, 10]
+        html: '<div style="transform:rotate(' + bearing + 'deg);color:' + color + ';font-size:24px;font-weight:bold;line-height:1;text-align:center;margin-top:-12px;margin-left:-8px;text-shadow: -1px -1px 0 #333, 1px -1px 0 #333, -1px 1px 0 #333, 1px 1px 0 #333;">&#x25B2;</div>',
+        iconSize: [16, 16],
+        iconAnchor: [8, 8]
       });
     }
 
     points.forEach(function(p) {
       var targetLayer = layerMap[p.label] || queryLayer;
+      var marker;
 
-      var marker = L.circleMarker([p.lat, p.lon], {
-        radius: 6,
-        fillColor: p.color,
-        color: '#333',
-        weight: 1,
-        fillOpacity: 0.85
-      }).addTo(targetLayer);
+      if (p.bearing != null) {
+        marker = L.marker([p.lat, p.lon], { icon: directionIcon(p.bearing, p.color) })
+          .addTo(targetLayer);
+      } else {
+        marker = L.circleMarker([p.lat, p.lon], {
+          radius: 6,
+          fillColor: p.color,
+          color: '#333',
+          weight: 1,
+          fillOpacity: 0.85
+        }).addTo(targetLayer);
+      }
 
       var tooltip = p.label + ' | ' + p.lat.toFixed(5) + ', ' + p.lon.toFixed(5) +
         (p.bearing != null ? ' | ' + p.bearing + '\u00B0' : '');
@@ -690,11 +697,6 @@ async function handleRequestMap(): Promise<Response> {
         p.lat.toFixed(5) + ', ' + p.lon.toFixed(5) +
         (p.bearing != null ? '<br>Bearing: ' + p.bearing + '&deg;' : '');
       marker.bindPopup(popup);
-
-      if (p.bearing != null && p.label === 'Query') {
-        L.marker([p.lat, p.lon], { icon: arrowIcon(p.bearing, p.color) })
-          .addTo(arrowLayer);
-      }
     });
 
     // Fit bounds
@@ -709,7 +711,6 @@ async function handleRequestMap(): Promise<Response> {
     overlays['<i style="background:#e74c3c;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Event reports'] = reportLayer;
     overlays['<i style="background:#f39c12;width:10px;height:10px;display:inline-block;border-radius:50%;margin-right:4px"></i> Response updates'] = responseLayer;
     overlays['<span style="color:#2980b9">- - -</span> Device route'] = routeLayer;
-    overlays['&#x25B2; Bearing arrows'] = arrowLayer;
 
     L.control.layers(null, overlays, { collapsed: false, position: 'topright' }).addTo(map);
   <\/script>
