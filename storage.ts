@@ -293,7 +293,7 @@ export interface RequestLogEntry {
   bearing?: number;
 }
 
-const REQUEST_LOG_MAX = 5;
+const REQUEST_LOG_MAX = 50;
 
 /** Record an API request. Evicts oldest entries beyond 500. */
 export async function logRequest(entry: RequestLogEntry): Promise<void> {
@@ -317,7 +317,7 @@ export async function logRequest(entry: RequestLogEntry): Promise<void> {
 }
 
 /** List recent request log entries, newest first. */
-export async function listRequestLogs(limit = 5): Promise<RequestLogEntry[]> {
+export async function listRequestLogs(limit = 50): Promise<RequestLogEntry[]> {
   const logs: { key: string; value: RequestLogEntry }[] = [];
   const entries = kv.list<RequestLogEntry>({ prefix: ["request_log"] });
   for await (const entry of entries) {
