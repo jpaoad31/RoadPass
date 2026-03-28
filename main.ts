@@ -421,11 +421,12 @@ async function loggedRoute(req: Request): Promise<Response> {
 
   // Clone the request body for logging if it's a mutation endpoint
   let bodyPreview = "";
+  let bodyFull = "";
   if (method === "POST" || method === "PATCH" || method === "DELETE") {
     try {
       const cloned = req.clone();
-      const text = await cloned.text();
-      bodyPreview = text.length > 500 ? text.slice(0, 500) + "..." : text;
+      bodyFull = await cloned.text();
+      bodyPreview = bodyFull.length > 500 ? bodyFull.slice(0, 500) + "..." : bodyFull;
     } catch { /* no body */ }
   }
 
@@ -464,13 +465,13 @@ async function loggedRoute(req: Request): Promise<Response> {
     let bodyLat: number | undefined;
     let bodyLon: number | undefined;
     let bodyBearing: number | undefined;
-    if (bodyPreview && (path === "/events")) {
+    if (bodyFull && (path === "/events")) {
       try {
-        const parsed = JSON.parse(bodyPreview.replace(/\.\.\.$/, ""));
+        const parsed = JSON.parse(bodyFull);
         bodyLat = parsed?.location?.latitude;
         bodyLon = parsed?.location?.longitude;
         bodyBearing = parsed?.location?.bearing_deg;
-      } catch { /* ignore parse errors on truncated bodies */ }
+      } catch { /* ignore parse errors */ }
     }
 
     logRequest({
