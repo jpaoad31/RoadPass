@@ -680,6 +680,10 @@ async function handleRequestMap(): Promise<Response> {
         fillOpacity: 0.85
       }).addTo(targetLayer);
 
+      var tooltip = p.label + ' | ' + p.lat.toFixed(5) + ', ' + p.lon.toFixed(5) +
+        (p.bearing != null ? ' | ' + p.bearing + '\u00B0' : '');
+      marker.bindTooltip(tooltip, { direction: 'top', offset: [0, -8] });
+
       var popup = '<b>' + p.label + '</b> ' + p.path + '<br>' +
         p.time + '<br>' +
         'Status: ' + p.status + '<br>' +
