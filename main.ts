@@ -1,6 +1,6 @@
 import { haversineDistance, bearingBetween, bearingDifference } from "./geo.ts";
 import { reverseGeocode } from "./nominatim.ts";
-import { createEvent, updateResponse, getEvent, findEventsNear, deleteAll } from "./storage.ts";
+import { createEvent, updateResponse, getEvent, findEventsNear, listEvents, deleteAll } from "./storage.ts";
 import type {
   HazardEventPayload,
   ResponseUpdate,
@@ -161,6 +161,69 @@ async function handleHazardsAhead(req: Request): Promise<Response> {
   return json(result);
 }
 
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+async function handleDashboard(): Promise<Response> {
+  const events = await listEvents(100);
+
+  const rows = events.map((e) => {
+    const time = new Date(e.detected_at_ms).toISOString().replace("T", " ").slice(0, 19);
+    const response = e.response
+      ? `${e.response.answer} (${e.response.latency_s}s)`
+      : "pending";
+    return `<tr>
+      <td title="${esc(e.event_id)}">${esc(e.event_id.slice(0, 8))}...</td>
+      <td>${esc(e.dongle_id)}</td>
+      <td>${time}</td>
+      <td>${esc(e.trigger_source)}</td>
+      <td>${e.location.latitude.toFixed(5)}, ${e.location.longitude.toFixed(5)}</td>
+      <td>${e.vehicle.speed_ms.toFixed(1)}</td>
+      <td>${e.vehicle.accel_ms2.toFixed(1)}</td>
+      <td>${e.location.bearing_deg.toFixed(0)}</td>
+      <td>${e.vehicle.brake_pressed ? "yes" : "no"}</td>
+      <td>${response}</td>
+    </tr>`;
+  }).join("\n");
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RoadPass - Hazard Events</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; background: #f5f5f5; }
+    h1 { color: #333; }
+    .count { color: #666; font-weight: normal; font-size: 0.6em; }
+    table { border-collapse: collapse; width: 100%; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #eee; font-size: 0.85rem; }
+    th { background: #333; color: white; position: sticky; top: 0; }
+    tr:hover { background: #f0f7ff; }
+    td:nth-child(6), td:nth-child(7) { font-variant-numeric: tabular-nums; }
+    .empty { text-align: center; padding: 3rem; color: #999; }
+  </style>
+</head>
+<body>
+  <h1>Hazard Events <span class="count">(${events.length} event${events.length !== 1 ? "s" : ""})</span></h1>
+  ${events.length === 0
+    ? '<div class="empty">No events recorded yet.</div>'
+    : `<table>
+    <thead><tr>
+      <th>ID</th><th>Dongle</th><th>Detected</th><th>Trigger</th>
+      <th>Location</th><th>Speed (m/s)</th><th>Accel (m/s2)</th>
+      <th>Bearing</th><th>Brake</th><th>Response</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`}
+</body>
+</html>`;
+
+  return new Response(html, {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
 function route(req: Request): Promise<Response> | Response {
   const url = new URL(req.url);
   const path = url.pathname;
@@ -180,6 +243,30 @@ function route(req: Request): Promise<Response> | Response {
 
   if (req.method === "GET" && path === "/hazards/ahead") {
     return handleHazardsAhead(req);
+  }
+
+  if (req.method === "GET" && path === "/") {
+    return handleDashboard();
+  }
+
+  if (req.method === "GET" && path === "/about") {
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RoadPass - About</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; background: #f5f5f5; }
+    h1 { color: #333; }
+    p { color: #555; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <h1>Made By:</h1>
+  <p>Swetha Shankar and John Adams</p>
+</body>
+</html>`;
+    return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   }
 
   if (req.method === "DELETE" && path === "/events") {

@@ -102,6 +102,18 @@ export async function findEventsNear(
   return events;
 }
 
+/** List up to `limit` events, newest first. */
+export async function listEvents(limit = 100): Promise<StoredHazardEvent[]> {
+  const events: StoredHazardEvent[] = [];
+  const entries = kv.list<StoredHazardEvent>({ prefix: ["events"] });
+  for await (const entry of entries) {
+    events.push(entry.value);
+    if (events.length >= limit) break;
+  }
+  events.sort((a, b) => b.detected_at_ms - a.detected_at_ms);
+  return events;
+}
+
 /** Delete all entries from the KV store. */
 export async function deleteAll(): Promise<number> {
   let count = 0;
