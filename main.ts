@@ -1,7 +1,7 @@
 import { haversineDistance, bearingBetween, bearingDifference } from "./geo.ts";
 import { computeConfidence } from "./scoring.ts";
 import { reverseGeocode } from "./nominatim.ts";
-import { createEvent, updateResponse, getEvent, listEvents, deleteAll, logRequest, listRequestLogs, upsertHazardForEvent, confirmHazard, findHazardsNear, getHazard, listHazards } from "./storage.ts";
+import { createEvent, updateResponse, getEvent, listEvents, deleteAll, logRequest, listRequestLogs, upsertHazardForEvent, confirmHazard, findHazardsNear, getHazard, listHazards, hasDongleReportedHazard } from "./storage.ts";
 import type {
   HazardEventPayload,
   HazardConfirmation,
@@ -115,6 +115,7 @@ async function handleHazardsAhead(req: Request): Promise<Response> {
   }
 
   const radiusM = parseFloat(url.searchParams.get("radius_m") ?? String(MILE_M));
+  const dongleId = url.searchParams.get("dongle_id") ?? "";
 
   // 1. Find aggregated hazards within the search radius
   const nearby = await findHazardsNear(lat, lon, radiusM);
@@ -128,11 +129,15 @@ async function handleHazardsAhead(req: Request): Promise<Response> {
   // 3. Reverse geocode to get road info
   const road = await reverseGeocode(lat, lon);
 
-  // 4. Build response
-  const hazards: HazardAhead[] = ahead.map((h) => {
+  // 4. Check device_previously_reported for each hazard
+  const hazards: HazardAhead[] = [];
+  for (const h of ahead) {
     const dist = haversineDistance(lat, lon, h.latitude, h.longitude);
     const { score, tier } = computeConfidence(h);
-    return {
+    const previouslyReported = dongleId
+      ? await hasDongleReportedHazard(h, dongleId)
+      : false;
+    hazards.push({
       hazard_id: h.hazard_id,
       latitude: h.latitude,
       longitude: h.longitude,
@@ -145,8 +150,9 @@ async function handleHazardsAhead(req: Request): Promise<Response> {
       last_reported_at: h.last_reported_at,
       confidence_score: score,
       confidence_tier: tier,
-    };
-  });
+      device_previously_reported: previouslyReported,
+    });
+  }
 
   hazards.sort((a, b) => a.distance_m - b.distance_m);
 

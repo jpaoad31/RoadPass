@@ -278,6 +278,18 @@ export async function listHazards(limit = 100): Promise<StoredHazard[]> {
   return hazards;
 }
 
+/** Check if a dongle has previously reported any event linked to a hazard. */
+export async function hasDongleReportedHazard(
+  hazard: StoredHazard,
+  dongleId: string,
+): Promise<boolean> {
+  for (const eventId of hazard.event_ids) {
+    const event = await getEvent(eventId);
+    if (event && event.dongle_id === dongleId) return true;
+  }
+  return false;
+}
+
 // ── Request log ─────────────────────────────────────────────────────
 
 export interface RequestLogEntry {

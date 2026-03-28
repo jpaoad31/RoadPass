@@ -75,6 +75,7 @@ export interface HazardAhead {
   last_reported_at: string;
   confidence_score: number;    // 0–100
   confidence_tier: ConfidenceTier;
+  device_previously_reported: boolean;
 }
 
 /** Aggregated hazard record — multiple events/confirmations roll up into one */
