@@ -1,8 +1,9 @@
 import { haversineDistance, bearingBetween, bearingDifference } from "./geo.ts";
 import { reverseGeocode } from "./nominatim.ts";
-import { createEvent, updateResponse, getEvent, findEventsNear, listEvents, deleteAll, logRequest, listRequestLogs } from "./storage.ts";
+import { createEvent, updateResponse, getEvent, listEvents, deleteAll, logRequest, listRequestLogs, upsertHazardForEvent, confirmHazard, findHazardsNear, getHazard, listHazards } from "./storage.ts";
 import type {
   HazardEventPayload,
+  HazardConfirmation,
   ResponseUpdate,
   StoredHazardEvent,
   HazardAhead,
@@ -22,49 +23,7 @@ function err(message: string, status: number): Response {
   return json({ error: message }, status);
 }
 
-/** Aggregate response stats for hazards at roughly the same location */
-function summarizeResponses(
-  events: StoredHazardEvent[],
-  clusterRadiusM = 50,
-): Map<string, { yes: number; no: number; total: number }> {
-  const clusters: { center: { lat: number; lon: number }; eventIds: string[]; yes: number; no: number; total: number }[] = [];
 
-  for (const e of events) {
-    const eLat = e.location.latitude;
-    const eLon = e.location.longitude;
-    let placed = false;
-
-    for (const c of clusters) {
-      if (haversineDistance(c.center.lat, c.center.lon, eLat, eLon) <= clusterRadiusM) {
-        c.eventIds.push(e.event_id);
-        c.total++;
-        if (e.response?.answer === "yes") c.yes++;
-        if (e.response?.answer === "no") c.no++;
-        placed = true;
-        break;
-      }
-    }
-
-    if (!placed) {
-      clusters.push({
-        center: { lat: eLat, lon: eLon },
-        eventIds: [e.event_id],
-        total: 1,
-        yes: e.response?.answer === "yes" ? 1 : 0,
-        no: e.response?.answer === "no" ? 1 : 0,
-      });
-    }
-  }
-
-  const summary = new Map<string, { yes: number; no: number; total: number }>();
-  for (const c of clusters) {
-    const stats = { yes: c.yes, no: c.no, total: c.total };
-    for (const id of c.eventIds) {
-      summary.set(id, stats);
-    }
-  }
-  return summary;
-}
 
 async function handleReportEvent(req: Request): Promise<Response> {
   const body = await req.json() as HazardEventPayload;
@@ -83,7 +42,14 @@ async function handleReportEvent(req: Request): Promise<Response> {
     return err("Event already exists or write conflict", 409);
   }
 
-  return json({ status: "created", event_id: body.event_id }, 201);
+  // Upsert aggregated hazard — link this event to an existing hazard or create a new one
+  const hazardId = await upsertHazardForEvent(
+    body.event_id,
+    body.location.latitude,
+    body.location.longitude,
+  );
+
+  return json({ status: "created", event_id: body.event_id, hazard_id: hazardId }, 201);
 }
 
 async function handleUpdateResponse(req: Request): Promise<Response> {
@@ -99,6 +65,36 @@ async function handleUpdateResponse(req: Request): Promise<Response> {
   }
 
   return json({ status: "updated", event_id: body.event_id });
+}
+
+async function handleConfirmHazard(req: Request): Promise<Response> {
+  const body = await req.json() as HazardConfirmation;
+
+  if (!body.hazard_id || !body.confirmation) {
+    return err("Missing required fields: hazard_id, confirmation", 400);
+  }
+
+  if (body.confirmation !== "confirmed" && body.confirmation !== "cleared") {
+    return err('confirmation must be "confirmed" or "cleared"', 400);
+  }
+
+  const updated = await confirmHazard(body.hazard_id, body.confirmation);
+  if (!updated) {
+    return err("Hazard not found", 404);
+  }
+
+  return json({
+    status: "updated",
+    hazard_id: body.hazard_id,
+    confirm_count: updated.confirm_count,
+    reject_count: updated.reject_count,
+  });
+}
+
+async function handleGetHazard(hazardId: string): Promise<Response> {
+  const hazard = await getHazard(hazardId);
+  if (!hazard) return err("Not found", 404);
+  return json(hazard);
 }
 
 async function handleGetEvent(eventId: string): Promise<Response> {
@@ -119,39 +115,32 @@ async function handleHazardsAhead(req: Request): Promise<Response> {
 
   const radiusM = parseFloat(url.searchParams.get("radius_m") ?? String(MILE_M));
 
-  // 1. Find all events within the search radius
-  const nearby = await findEventsNear(lat, lon, radiusM);
+  // 1. Find aggregated hazards within the search radius
+  const nearby = await findHazardsNear(lat, lon, radiusM);
 
-  // 2. Filter to events that are roughly "ahead" (within 90° of heading)
-  const ahead = nearby.filter((e) => {
-    const toBearing = bearingBetween(lat, lon, e.location.latitude, e.location.longitude);
+  // 2. Filter to hazards that are roughly "ahead" (within 90° of heading)
+  const ahead = nearby.filter((h) => {
+    const toBearing = bearingBetween(lat, lon, h.latitude, h.longitude);
     return bearingDifference(bearing, toBearing) < 90;
   });
 
-  // 3. Build response summaries (cluster nearby reports)
-  const summaries = summarizeResponses(ahead);
-
-  // 4. Reverse geocode to get road info
+  // 3. Reverse geocode to get road info
   const road = await reverseGeocode(lat, lon);
 
-  // 5. Build response
-  const hazards: HazardAhead[] = ahead.map((e) => {
-    const dist = haversineDistance(lat, lon, e.location.latitude, e.location.longitude);
-    const stats = summaries.get(e.event_id) ?? { yes: 0, no: 0, total: 1 };
+  // 4. Build response
+  const hazards: HazardAhead[] = ahead.map((h) => {
+    const dist = haversineDistance(lat, lon, h.latitude, h.longitude);
     return {
-      event_id: e.event_id,
-      latitude: e.location.latitude,
-      longitude: e.location.longitude,
+      hazard_id: h.hazard_id,
+      latitude: h.latitude,
+      longitude: h.longitude,
       distance_m: Math.round(dist),
-      bearing_deg: Math.round(bearingBetween(lat, lon, e.location.latitude, e.location.longitude)),
-      trigger_source: e.trigger_source,
-      detected_at_ms: e.detected_at_ms,
-      accel_ms2: e.vehicle.accel_ms2,
-      response_summary: {
-        yes_count: stats.yes,
-        no_count: stats.no,
-        total_reports: stats.total,
-      },
+      bearing_deg: Math.round(bearingBetween(lat, lon, h.latitude, h.longitude)),
+      report_count: h.report_count,
+      confirm_count: h.confirm_count,
+      reject_count: h.reject_count,
+      first_reported_at: h.first_reported_at,
+      last_reported_at: h.last_reported_at,
     };
   });
 
@@ -352,6 +341,15 @@ function route(req: Request): Promise<Response> | Response {
     return handleHazardsAhead(req);
   }
 
+  if (req.method === "POST" && path === "/hazards/confirm") {
+    return handleConfirmHazard(req);
+  }
+
+  if (req.method === "GET" && path.startsWith("/hazards/") && !path.includes("/ahead")) {
+    const id = path.slice("/hazards/".length);
+    if (id && !id.includes("/")) return handleGetHazard(id);
+  }
+
   if (req.method === "GET" && path === "/") {
     return handleDashboard();
   }
@@ -504,6 +502,7 @@ async function handleRequestLog(): Promise<Response> {
 <head>
   <meta charset="utf-8">
   <title>RoadPass - Request Log</title>
+  <meta http-equiv="refresh" content="10">
   <style>
     body { font-family: system-ui, sans-serif; margin: 2rem; background: #f5f5f5; }
     h1 { color: #333; }
@@ -593,6 +592,7 @@ async function handleRequestMap(): Promise<Response> {
 <head>
   <meta charset="utf-8">
   <title>RoadPass - Request Map</title>
+  <meta http-equiv="refresh" content="10">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
   <style>

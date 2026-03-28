@@ -60,19 +60,38 @@ export interface ResponseUpdate {
 
 /** What the "hazards ahead" endpoint returns per hazard */
 export interface HazardAhead {
-  event_id: string;
+  hazard_id: string;
   latitude: number;
   longitude: number;
   distance_m: number;
   bearing_deg: number;
-  trigger_source: string;
-  detected_at_ms: number;
-  accel_ms2: number;
-  response_summary: {
-    yes_count: number;
-    no_count: number;
-    total_reports: number;
-  };
+  report_count: number;
+  confirm_count: number;
+  reject_count: number;
+  first_reported_at: string;
+  last_reported_at: string;
+}
+
+/** Aggregated hazard record — multiple events/confirmations roll up into one */
+export interface StoredHazard {
+  hazard_id: string;
+  latitude: number;
+  longitude: number;
+  first_reported_at: string;  // ISO 8601
+  last_reported_at: string;   // ISO 8601
+  report_count: number;       // how many distinct events created/linked this hazard
+  confirm_count: number;      // devices that passed through and confirmed it
+  reject_count: number;       // devices that passed through and said it's clear
+  event_ids: string[];        // linked event IDs
+}
+
+/** Device confirmation that a known hazard still exists (or is gone) */
+export interface HazardConfirmation {
+  hazard_id: string;
+  dongle_id: string;
+  confirmation: "confirmed" | "cleared";
+  latitude: number;
+  longitude: number;
 }
 
 /** Road info from Nominatim */

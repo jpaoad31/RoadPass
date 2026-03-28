@@ -77,7 +77,7 @@ const LOCATIONS: Record<string, PresetLocation> = {
 
 // ── Session state ───────────────────────────────────────────────────
 
-const sessionEvents: { id: string; location: string; time: string }[] = [];
+const sessionEvents: { id: string; hazardId: string; location: string; time: string }[] = [];
 let eventCounter = 0;
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -164,6 +164,8 @@ Commands:
   get <event_id>                Fetch a single event by ID
   ahead <location> [radius_m]   Query hazards ahead from a location
   history                       Show events reported this session
+  confirm <hazard_id> <yes|no>   Confirm or clear a known hazard
+  hazard <hazard_id>             Fetch a hazard by ID
   seed                          Report one event at each of the 5 locations
   reset                         Delete everything in the database
   help                          Show this help
@@ -200,9 +202,11 @@ async function cmdReport(locName: string, manual: boolean) {
   });
 
   if (result) {
-    console.log(`  ✓ Created`);
+    const res = result as { hazard_id?: string };
+    console.log(`  ✓ Created (hazard: ${res.hazard_id ?? "?"})`);
     sessionEvents.push({
       id: payload.event_id,
+      hazardId: res.hazard_id ?? "",
       location: locName,
       time: new Date().toLocaleTimeString(),
     });
@@ -268,7 +272,7 @@ async function cmdAhead(locName: string, radiusM?: number) {
 
   const result = await doFetch(`/hazards/ahead?${params}`) as {
     road: { road_name: string | null; osm_way_id: string | null; road_ref: string | null };
-    hazards: { event_id: string; distance_m: number; bearing_deg: number; accel_ms2: number; response_summary: { yes_count: number; no_count: number; total_reports: number } }[];
+    hazards: { hazard_id: string; distance_m: number; bearing_deg: number; report_count: number; confirm_count: number; reject_count: number; last_reported_at: string }[];
   } | null;
 
   if (result) {
@@ -278,12 +282,66 @@ async function cmdAhead(locName: string, radiusM?: number) {
     } else {
       console.log(`  ${result.hazards.length} hazard(s) ahead:\n`);
       for (const h of result.hazards) {
-        const conf = `${h.response_summary.yes_count}y/${h.response_summary.no_count}n of ${h.response_summary.total_reports}`;
-        console.log(`    ${h.distance_m}m away @ ${h.bearing_deg}° | accel: ${h.accel_ms2} m/s² | responses: ${conf}`);
-        console.log(`    id: ${h.event_id}`);
+        const stats = `${h.report_count} reports, ${h.confirm_count} confirmed, ${h.reject_count} cleared`;
+        console.log(`    ${h.distance_m}m away @ ${h.bearing_deg}° | ${stats}`);
+        console.log(`    hazard: ${h.hazard_id} | last: ${h.last_reported_at}`);
       }
     }
     console.log();
+  }
+}
+
+async function cmdConfirm(hazardId: string, answer: string) {
+  if (!hazardId) {
+    console.log(`  Usage: confirm <hazard_id> <yes|no>`);
+    return;
+  }
+
+  // Allow shorthand: look up hazard ID from session history by index
+  const idx = parseInt(hazardId);
+  let resolvedId = hazardId;
+  if (!isNaN(idx) && idx >= 0 && idx < sessionEvents.length) {
+    resolvedId = sessionEvents[idx].hazardId;
+    console.log(`  Resolving #${idx} → hazard ${resolvedId}`);
+  }
+
+  const confirmation = answer === "no" ? "cleared" : "confirmed";
+  console.log(`  Sending "${confirmation}" for hazard ${resolvedId}`);
+
+  const result = await doFetch("/hazards/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      hazard_id: resolvedId,
+      dongle_id: "test-client-dongle",
+      confirmation,
+      latitude: 0,
+      longitude: 0,
+    }),
+  }) as { confirm_count?: number; reject_count?: number } | null;
+
+  if (result) {
+    console.log(`  ✓ Updated — confirms: ${result.confirm_count}, clears: ${result.reject_count}`);
+  }
+}
+
+async function cmdHazard(hazardId: string) {
+  if (!hazardId) {
+    console.log(`  Usage: hazard <hazard_id>`);
+    return;
+  }
+
+  // Allow shorthand
+  const idx = parseInt(hazardId);
+  let resolvedId = hazardId;
+  if (!isNaN(idx) && idx >= 0 && idx < sessionEvents.length) {
+    resolvedId = sessionEvents[idx].hazardId;
+    console.log(`  Resolving #${idx} → hazard ${resolvedId}`);
+  }
+
+  const result = await doFetch(`/hazards/${resolvedId}`);
+  if (result) {
+    console.log(JSON.stringify(result, null, 2));
   }
 }
 
@@ -292,13 +350,13 @@ function cmdHistory() {
     console.log("  No events reported this session.");
     return;
   }
-  console.log("\n  # | Location    | Time     | Event ID");
-  console.log("  --|-------------|----------|" + "-".repeat(38));
+  console.log("\n  # | Location    | Time     | Hazard ID                            | Event ID");
+  console.log("  --|-------------|----------|--------------------------------------|" + "-".repeat(38));
   for (let i = 0; i < sessionEvents.length; i++) {
     const e = sessionEvents[i];
-    console.log(`  ${String(i).padEnd(2)}| ${e.location.padEnd(12)}| ${e.time.padEnd(9)}| ${e.id}`);
+    console.log(`  ${String(i).padEnd(2)}| ${e.location.padEnd(12)}| ${e.time.padEnd(9)}| ${e.hazardId.padEnd(37)}| ${e.id}`);
   }
-  console.log(`\n  Tip: use 'get <#>' to fetch by index, or 'respond <id> yes' to respond.`);
+  console.log(`\n  Tip: 'confirm <#> yes' to confirm, 'hazard <#>' to view hazard details.`);
   console.log();
 }
 
@@ -380,6 +438,13 @@ async function main() {
         case "history":
         case "h":
           cmdHistory();
+          break;
+        case "confirm":
+        case "c":
+          await cmdConfirm(parts[1] ?? "", parts[2] ?? "yes");
+          break;
+        case "hazard":
+          await cmdHazard(parts[1] ?? "");
           break;
         case "seed":
         case "s":

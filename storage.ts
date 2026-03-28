@@ -1,4 +1,5 @@
-import type { StoredHazardEvent } from "./types.ts";
+import type { StoredHazardEvent, StoredHazard } from "./types.ts";
+import { haversineDistance } from "./geo.ts";
 
 const kv = await Deno.openKv();
 
@@ -114,6 +115,169 @@ export async function listEvents(limit = 100): Promise<StoredHazardEvent[]> {
   return events;
 }
 
+// ── Aggregated hazards ───────────────────────────────────────────────
+
+const HAZARD_MERGE_RADIUS_M = 30;
+
+/** Find an existing hazard near a location, or null. */
+export async function findNearbyHazard(
+  lat: number,
+  lon: number,
+): Promise<StoredHazard | null> {
+  // Scan hazard geo index within a small radius
+  const latBucket = Math.round(lat * 100);
+  const lonBucket = Math.round(lon * 100);
+
+  for (let dLat = -1; dLat <= 1; dLat++) {
+    for (let dLon = -1; dLon <= 1; dLon++) {
+      const entries = kv.list<string>({
+        prefix: ["hazard_geo", latBucket + dLat, lonBucket + dLon],
+      });
+      for await (const entry of entries) {
+        const hazard = await getHazard(entry.value);
+        if (hazard && haversineDistance(lat, lon, hazard.latitude, hazard.longitude) <= HAZARD_MERGE_RADIUS_M) {
+          return hazard;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** Get a hazard by ID. */
+export async function getHazard(hazardId: string): Promise<StoredHazard | null> {
+  const result = await kv.get<StoredHazard>(["hazards", hazardId]);
+  return result.value;
+}
+
+/**
+ * Create or update an aggregated hazard when a new event comes in.
+ * If an existing hazard is within 30m, the event is linked to it.
+ * Otherwise a new hazard is created.
+ * Returns the hazard ID.
+ */
+export async function upsertHazardForEvent(
+  eventId: string,
+  lat: number,
+  lon: number,
+): Promise<string> {
+  const existing = await findNearbyHazard(lat, lon);
+
+  if (existing) {
+    // Link event to existing hazard
+    const key = ["hazards", existing.hazard_id];
+    const current = await kv.get<StoredHazard>(key);
+    if (!current.value) return existing.hazard_id;
+
+    const updated: StoredHazard = {
+      ...current.value,
+      report_count: current.value.report_count + 1,
+      last_reported_at: new Date().toISOString(),
+      event_ids: [...current.value.event_ids, eventId],
+    };
+
+    const tx = kv.atomic();
+    tx.check(current);
+    tx.set(key, updated);
+    await tx.commit();
+    return existing.hazard_id;
+  }
+
+  // Create new hazard
+  const hazardId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const hazard: StoredHazard = {
+    hazard_id: hazardId,
+    latitude: lat,
+    longitude: lon,
+    first_reported_at: now,
+    last_reported_at: now,
+    report_count: 1,
+    confirm_count: 0,
+    reject_count: 0,
+    event_ids: [eventId],
+  };
+
+  const latBucket = Math.round(lat * 100);
+  const lonBucket = Math.round(lon * 100);
+
+  const tx = kv.atomic();
+  tx.set(["hazards", hazardId], hazard);
+  tx.set(["hazard_geo", latBucket, lonBucket, hazardId], hazardId);
+  await tx.commit();
+
+  return hazardId;
+}
+
+/** Confirm or reject a known hazard. Returns updated hazard or null if not found. */
+export async function confirmHazard(
+  hazardId: string,
+  confirmation: "confirmed" | "cleared",
+): Promise<StoredHazard | null> {
+  const key = ["hazards", hazardId];
+  const existing = await kv.get<StoredHazard>(key);
+  if (!existing.value) return null;
+
+  const updated: StoredHazard = {
+    ...existing.value,
+    confirm_count: existing.value.confirm_count + (confirmation === "confirmed" ? 1 : 0),
+    reject_count: existing.value.reject_count + (confirmation === "cleared" ? 1 : 0),
+    last_reported_at: new Date().toISOString(),
+  };
+
+  const tx = kv.atomic();
+  tx.check(existing);
+  tx.set(key, updated);
+  const result = await tx.commit();
+  return result.ok ? updated : null;
+}
+
+/** Find all hazards near a location. */
+export async function findHazardsNear(
+  lat: number,
+  lon: number,
+  radiusM: number,
+): Promise<StoredHazard[]> {
+  const latSpan = Math.ceil(radiusM / 1111) + 1;
+  const lonDegreesPerM = 111_320 * Math.cos((lat * Math.PI) / 180);
+  const lonSpan = Math.ceil(radiusM / (lonDegreesPerM * 0.01)) + 1;
+
+  const centerLatBucket = Math.round(lat * 100);
+  const centerLonBucket = Math.round(lon * 100);
+
+  const hazardIds = new Set<string>();
+
+  for (let dLat = -latSpan; dLat <= latSpan; dLat++) {
+    for (let dLon = -lonSpan; dLon <= lonSpan; dLon++) {
+      const entries = kv.list<string>({
+        prefix: ["hazard_geo", centerLatBucket + dLat, centerLonBucket + dLon],
+      });
+      for await (const entry of entries) {
+        hazardIds.add(entry.value);
+      }
+    }
+  }
+
+  const hazards: StoredHazard[] = [];
+  for (const id of hazardIds) {
+    const h = await getHazard(id);
+    if (h) hazards.push(h);
+  }
+  return hazards;
+}
+
+/** List up to `limit` hazards, most recently reported first. */
+export async function listHazards(limit = 100): Promise<StoredHazard[]> {
+  const hazards: StoredHazard[] = [];
+  const entries = kv.list<StoredHazard>({ prefix: ["hazards"] });
+  for await (const entry of entries) {
+    hazards.push(entry.value);
+    if (hazards.length >= limit) break;
+  }
+  hazards.sort((a, b) => new Date(b.last_reported_at).getTime() - new Date(a.last_reported_at).getTime());
+  return hazards;
+}
+
 // ── Request log ─────────────────────────────────────────────────────
 
 export interface RequestLogEntry {
@@ -129,7 +293,7 @@ export interface RequestLogEntry {
   bearing?: number;
 }
 
-const REQUEST_LOG_MAX = 500;
+const REQUEST_LOG_MAX = 5;
 
 /** Record an API request. Evicts oldest entries beyond 500. */
 export async function logRequest(entry: RequestLogEntry): Promise<void> {
@@ -153,7 +317,7 @@ export async function logRequest(entry: RequestLogEntry): Promise<void> {
 }
 
 /** List recent request log entries, newest first. */
-export async function listRequestLogs(limit = 500): Promise<RequestLogEntry[]> {
+export async function listRequestLogs(limit = 5): Promise<RequestLogEntry[]> {
   const logs: { key: string; value: RequestLogEntry }[] = [];
   const entries = kv.list<RequestLogEntry>({ prefix: ["request_log"] });
   for await (const entry of entries) {
