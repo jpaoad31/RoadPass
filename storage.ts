@@ -114,6 +114,55 @@ export async function listEvents(limit = 100): Promise<StoredHazardEvent[]> {
   return events;
 }
 
+// ── Request log ─────────────────────────────────────────────────────
+
+export interface RequestLogEntry {
+  timestamp: string;
+  method: string;
+  path: string;
+  query: string;
+  status: number;
+  duration_ms: number;
+  body?: string;
+  lat?: number;
+  lon?: number;
+  bearing?: number;
+}
+
+const REQUEST_LOG_MAX = 500;
+
+/** Record an API request. Evicts oldest entries beyond 500. */
+export async function logRequest(entry: RequestLogEntry): Promise<void> {
+  const ts = Date.now();
+  const id = `${ts}-${Math.random().toString(36).slice(2, 8)}`;
+  await kv.set(["request_log", id], entry);
+
+  // Evict oldest if over limit
+  const all: string[] = [];
+  const entries = kv.list<RequestLogEntry>({ prefix: ["request_log"] });
+  for await (const e of entries) {
+    all.push(e.key[1] as string);
+  }
+  if (all.length > REQUEST_LOG_MAX) {
+    all.sort();
+    const toDelete = all.slice(0, all.length - REQUEST_LOG_MAX);
+    for (const key of toDelete) {
+      await kv.delete(["request_log", key]);
+    }
+  }
+}
+
+/** List recent request log entries, newest first. */
+export async function listRequestLogs(limit = 500): Promise<RequestLogEntry[]> {
+  const logs: { key: string; value: RequestLogEntry }[] = [];
+  const entries = kv.list<RequestLogEntry>({ prefix: ["request_log"] });
+  for await (const entry of entries) {
+    logs.push({ key: entry.key[1] as string, value: entry.value });
+  }
+  logs.sort((a, b) => b.key.localeCompare(a.key));
+  return logs.slice(0, limit).map((l) => l.value);
+}
+
 /** Delete all entries from the KV store. */
 export async function deleteAll(): Promise<number> {
   let count = 0;
