@@ -89,11 +89,11 @@ async function handleReportEvent(req: Request): Promise<Response> {
 async function handleUpdateResponse(req: Request): Promise<Response> {
   const body = await req.json() as ResponseUpdate;
 
-  if (!body.event_id || !body.answer) {
-    return err("Missing required fields: event_id, answer", 400);
+  if (!body.event_id || !body.response) {
+    return err("Missing required fields: event_id, response", 400);
   }
 
-  const updated = await updateResponse(body.event_id, body.answer, body.latency_s ?? 0);
+  const updated = await updateResponse(body.event_id, body.response, body.response_latency_s ?? 0);
   if (!updated) {
     return err("Event not found or write conflict", 404);
   }

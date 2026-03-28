@@ -54,9 +54,8 @@ export interface StoredHazardEvent extends HazardEventPayload {
 /** Response update from a device */
 export interface ResponseUpdate {
   event_id: string;
-  dongle_id: string;
-  answer: "yes" | "no" | "timeout";
-  latency_s: number;
+  response: "yes" | "no" | "timeout";
+  response_latency_s: number;
 }
 
 /** What the "hazards ahead" endpoint returns per hazard */

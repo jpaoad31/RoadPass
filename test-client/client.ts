@@ -224,9 +224,8 @@ async function cmdRespond(eventId: string, answer: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       event_id: eventId,
-      dongle_id: "test-client-dongle",
-      answer,
-      latency_s: latency,
+      response: answer,
+      response_latency_s: latency,
     }),
   });
 

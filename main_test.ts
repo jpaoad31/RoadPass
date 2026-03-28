@@ -122,7 +122,7 @@ Deno.test({ name: "PATCH /events/response updates event", sanitizeResources: fal
   const patchRes = await fetch(`${base}/events/response`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ event_id: eventId, dongle_id: "test-dongle-2", answer: "yes", latency_s: 2.1 }),
+    body: JSON.stringify({ event_id: eventId, response: "yes", response_latency_s: 2.1 }),
   });
   assertEquals(patchRes.status, 200);
   await patchRes.text();
