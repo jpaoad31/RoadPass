@@ -1,7 +1,7 @@
 import { haversineDistance, bearingBetween, bearingDifference } from "./geo.ts";
 import { computeConfidence } from "./scoring.ts";
 import { reverseGeocode } from "./nominatim.ts";
-import { createEvent, updateResponse, getEvent, listEvents, deleteAll, logRequest, listRequestLogs, upsertHazardForEvent, confirmHazard, findHazardsNear, getHazard, listHazards, hasDongleReportedHazard } from "./storage.ts";
+import { createEvent, updateResponse, getEvent, listEvents, deleteAll, logRequest, listRequestLogs, upsertHazardForEvent, confirmHazard, findHazardsNear, getHazard, listHazards, deleteHazard, hasDongleReportedHazard } from "./storage.ts";
 import type {
   HazardEventPayload,
   HazardConfirmation,
@@ -243,7 +243,8 @@ async function handleMap(): Promise<Response> {
       `Confirmed: ${h.confirm_count} | Cleared: ${h.reject_count}<br>` +
       `Last: ${lastTime}<br>` +
       `Events: ${h.event_ids.length}<br>` +
-      `<small>${esc(h.hazard_id)}</small>`;
+      `<small>${esc(h.hazard_id)}</small><br>` +
+      `<button onclick="deleteHazard('${h.hazard_id}')" style="margin-top:6px;padding:3px 10px;background:#e74c3c;color:white;border:none;border-radius:3px;cursor:pointer;font-size:0.8rem;">Delete</button>`;
 
     return { lat: h.latitude, lon: h.longitude, color, popup, status: tier, radius };
   });
@@ -281,6 +282,15 @@ async function handleMap(): Promise<Response> {
   </div>
   <div id="map"></div>
   <script>
+    function deleteHazard(id) {
+      if (!confirm('Delete this hazard?')) return;
+      fetch('/hazards/' + id, { method: 'DELETE' })
+        .then(function(res) {
+          if (res.ok) { location.reload(); }
+          else { alert('Failed to delete hazard'); }
+        });
+    }
+
     const markers = ${markersJson};
     const map = L.map('map').setView([${centerLat}, ${centerLon}], 14);
 
@@ -360,6 +370,15 @@ function route(req: Request): Promise<Response> | Response {
   if (req.method === "GET" && path.startsWith("/hazards/") && !path.includes("/ahead")) {
     const id = path.slice("/hazards/".length);
     if (id && !id.includes("/")) return handleGetHazard(id);
+  }
+
+  if (req.method === "DELETE" && path.startsWith("/hazards/")) {
+    const id = path.slice("/hazards/".length);
+    if (id && !id.includes("/")) {
+      return deleteHazard(id).then((ok) =>
+        ok ? json({ status: "deleted", hazard_id: id }) : err("Hazard not found", 404)
+      );
+    }
   }
 
   if (req.method === "GET" && path === "/") {

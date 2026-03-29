@@ -89,6 +89,10 @@ export interface StoredHazard {
   confirm_count: number;      // devices that passed through and confirmed it
   reject_count: number;       // devices that passed through and said it's clear
   event_ids: string[];        // linked event IDs
+  // Driver popup response tallies from linked events
+  response_yes: number;       // events where driver said "yes, real hazard"
+  response_no: number;        // events where driver said "no, false alarm"
+  response_timeout: number;   // events where driver didn't respond
 }
 
 /** Device confirmation that a known hazard still exists (or is gone) */

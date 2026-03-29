@@ -31,7 +31,7 @@ export async function createEvent(
   return result.ok;
 }
 
-/** Update the response fields on an existing event. */
+/** Update the response fields on an existing event, and update the parent hazard's tallies. */
 export async function updateResponse(
   eventId: string,
   answer: "yes" | "no" | "timeout",
@@ -51,7 +51,40 @@ export async function updateResponse(
   tx.check(existing);
   tx.set(key, updated);
   const result = await tx.commit();
-  return result.ok ? updated : null;
+  if (!result.ok) return null;
+
+  // Update the parent hazard's response tallies
+  await updateHazardResponseTally(eventId, answer);
+
+  return updated;
+}
+
+/** Find the hazard that contains this event and increment the appropriate response tally. */
+async function updateHazardResponseTally(
+  eventId: string,
+  answer: "yes" | "no" | "timeout",
+): Promise<void> {
+  // Scan all hazards to find the one containing this event
+  const entries = kv.list<StoredHazard>({ prefix: ["hazards"] });
+  for await (const entry of entries) {
+    const hazard = entry.value;
+    if (!hazard.event_ids.includes(eventId)) continue;
+
+    const hazardKey = ["hazards", hazard.hazard_id];
+    const current = await kv.get<StoredHazard>(hazardKey);
+    if (!current.value) return;
+
+    const updatedHazard: StoredHazard = { ...current.value };
+    if (answer === "yes") updatedHazard.response_yes = (updatedHazard.response_yes ?? 0) + 1;
+    else if (answer === "no") updatedHazard.response_no = (updatedHazard.response_no ?? 0) + 1;
+    else updatedHazard.response_timeout = (updatedHazard.response_timeout ?? 0) + 1;
+
+    const tx = kv.atomic();
+    tx.check(current);
+    tx.set(hazardKey, updatedHazard);
+    await tx.commit();
+    return;
+  }
 }
 
 /** Get a single event by ID. */
@@ -196,6 +229,9 @@ export async function upsertHazardForEvent(
     confirm_count: 0,
     reject_count: 0,
     event_ids: [eventId],
+    response_yes: 0,
+    response_no: 0,
+    response_timeout: 0,
   };
 
   const latBucket = Math.round(lat * 100);
@@ -267,6 +303,19 @@ export async function findHazardsNear(
 }
 
 /** List up to `limit` hazards, most recently reported first. */
+/** Delete a hazard and its geo index entry. */
+export async function deleteHazard(hazardId: string): Promise<boolean> {
+  const hazard = await getHazard(hazardId);
+  if (!hazard) return false;
+
+  const latBucket = Math.round(hazard.latitude * 100);
+  const lonBucket = Math.round(hazard.longitude * 100);
+
+  await kv.delete(["hazards", hazardId]);
+  await kv.delete(["hazard_geo", latBucket, lonBucket, hazardId]);
+  return true;
+}
+
 export async function listHazards(limit = 100): Promise<StoredHazard[]> {
   const hazards: StoredHazard[] = [];
   const entries = kv.list<StoredHazard>({ prefix: ["hazards"] });
