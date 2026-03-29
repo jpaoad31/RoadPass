@@ -373,12 +373,14 @@ function route(req: Request): Promise<Response> | Response {
   }
 
   if (req.method === "DELETE" && path.startsWith("/hazards/")) {
-    const id = path.slice("/hazards/".length);
-    if (id && !id.includes("/")) {
-      return deleteHazard(id).then((ok) =>
-        ok ? json({ status: "deleted", hazard_id: id }) : err("Hazard not found", 404)
-      );
-    }
+    // Disabled for now
+    return err("Hazard deletion is disabled", 403);
+    // const id = path.slice("/hazards/".length);
+    // if (id && !id.includes("/")) {
+    //   return deleteHazard(id).then((ok) =>
+    //     ok ? json({ status: "deleted", hazard_id: id }) : err("Hazard not found", 404)
+    //   );
+    // }
   }
 
   if (req.method === "GET" && path === "/") {
@@ -579,24 +581,38 @@ async function handleRequestMap(): Promise<Response> {
   const geoLogs = logs.filter((l) => l.lat != null && l.lon != null);
 
   // Group by method+path to color differently (GET /hazards/ahead vs POST /events etc)
-  const points = geoLogs.map((l) => {
+  // Look up event responses for POST /events entries
+  const points = [];
+  for (const l of geoLogs) {
     const time = l.timestamp.replace("T", " ").slice(0, 23);
     let color: string;
     let label: string;
+    let eventResponse: string | null = null;
+
     if (l.method === "GET" && l.path === "/hazards/ahead") {
-      color = "#2980b9"; // blue for query requests
+      color = "#2980b9";
       label = "Query";
     } else if (l.method === "POST" && l.path === "/events") {
-      color = "#e74c3c"; // red for event reports
+      color = "#e74c3c";
       label = "Report";
+      // Try to look up the event's current response
+      if (l.body) {
+        try {
+          const parsed = JSON.parse(l.body.replace(/\.\.\.$/, ""));
+          if (parsed?.event_id) {
+            const event = await getEvent(parsed.event_id);
+            eventResponse = event?.response?.answer ?? "pending";
+          }
+        } catch { /* truncated body */ }
+      }
     } else if (l.method === "PATCH") {
-      color = "#f39c12"; // orange for responses
+      color = "#f39c12";
       label = "Response";
     } else {
-      color = "#95a5a6"; // grey for other
+      color = "#95a5a6";
       label = l.method;
     }
-    return {
+    points.push({
       lat: l.lat!,
       lon: l.lon!,
       bearing: l.bearing ?? null,
@@ -605,8 +621,9 @@ async function handleRequestMap(): Promise<Response> {
       time,
       path: l.path,
       status: l.status,
-    };
-  });
+      eventResponse,
+    });
+  }
 
   // Build route lines: connect sequential GET /hazards/ahead points (device route)
   const queryPoints = points
@@ -715,7 +732,8 @@ async function handleRequestMap(): Promise<Response> {
         p.time + '<br>' +
         'Status: ' + p.status + '<br>' +
         p.lat.toFixed(5) + ', ' + p.lon.toFixed(5) +
-        (p.bearing != null ? '<br>Bearing: ' + p.bearing + '&deg;' : '');
+        (p.bearing != null ? '<br>Bearing: ' + p.bearing + '&deg;' : '') +
+        (p.eventResponse != null ? '<br>Driver response: <b>' + p.eventResponse + '</b>' : '');
       marker.bindPopup(popup);
     });
 
